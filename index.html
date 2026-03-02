@@ -123,8 +123,7 @@
 
 <h3>Inbox</h3>
     <br>
-<button id="resetBtn" onclick="resetAllData()" style="background:#ed4245;">
-    RESET ALL DATA (InfinityPixel ONLY)
+
 </button>
 <div id="inboxList"></div>
 
@@ -140,7 +139,11 @@
 
 </div>
 </div>
-
+<button id="resetBtn"
+        onclick="resetAllData()"
+        style="background:#ed4245; display:none;">
+    RESET ALL DATA
+</button>
 <script>
 let mode = "login";
 let currentPage = 1;
@@ -172,8 +175,16 @@ function submitLogin(){
 }
 
 function loginSuccess(){
-    loginSection.style.display="none";
-    appSection.style.display="block";
+    const user = localStorage.getItem("currentUser");
+
+    loginSection.style.display = "none";
+    appSection.style.display = "block";
+
+    // 🔥 Only show reset button for InfinityPixel
+    if(user === "InfinityPixel"){
+        document.getElementById("resetBtn").style.display = "inline-block";
+    }
+
     loadSavedSearches();
     loadInbox();
 }
@@ -402,6 +413,7 @@ function lookupHexCode(){
 
 </body>
 </html>
+
 
 
 
