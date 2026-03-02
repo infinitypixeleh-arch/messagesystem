@@ -187,7 +187,6 @@ window.submitLogin = async function() {
     const pass = document.getElementById("passwordInput").value.trim();
     if(!user || !pass) return;
 
-    // Firebase requires an email format, so we use a fake domain for your usernames
     const fakeEmail = `${user.toLowerCase()}@seymour.base`;
 
     try {
@@ -201,7 +200,6 @@ window.submitLogin = async function() {
     }
 };
 
-// Listener for Login/Logout (Replaces loginSuccess)
 onAuthStateChanged(auth, (user) => {
     const loginSection = document.getElementById("loginSection");
     const appSection = document.getElementById("appSection");
@@ -224,12 +222,11 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// --- GLOBAL DATA SYNC ---
+// --- GLOBAL DATA SYNC & PAGINATION ---
 
-// New Global State for Pagination
 let currentPage = 1;
 const entriesPerPage = 10;
-let totalSearches = []; // To keep track of the full list
+let totalSearches = []; 
 
 function startGlobalSync(currentUser) {
     const searchList = document.getElementById("searchList");
@@ -239,37 +236,36 @@ function startGlobalSync(currentUser) {
         const data = snapshot.val();
         if (!data) {
             searchList.innerHTML = "No searches found.";
+            inboxList.innerHTML = "";
             return;
         }
 
-        // Convert object to array so we can paginate it
+        // Convert object to array and reverse to show newest first
         totalSearches = Object.keys(data).map(id => ({
             id: id,
             ...data[id]
-        })).reverse(); // .reverse() shows newest first
+        })).reverse(); 
 
         renderPaginatedList(currentUser);
         
-        // Update Personal Inbox (Inbox usually stays as a full scrollable list)
+        // Update Personal Inbox
         inboxList.innerHTML = "";
         totalSearches.forEach(entry => {
             if(entry.user === currentUser) {
                 const inv = document.createElement("div");
                 inv.className = "inbox-entry";
                 inv.textContent = `${entry.item} (${entry.hex})`;
-                inv.onclick = () => openChat(entry.id, entry.hex, entry.item);
+                inv.onclick = () => window.openChat(entry.id, entry.hex, entry.item);
                 inboxList.appendChild(inv);
             }
         });
     });
 }
 
-// Function to handle rendering the specific page
 function renderPaginatedList(currentUser) {
     const searchList = document.getElementById("searchList");
     searchList.innerHTML = "";
 
-    // Calculate start and end indexes
     const startIndex = (currentPage - 1) * entriesPerPage;
     const endIndex = startIndex + entriesPerPage;
     const pageItems = totalSearches.slice(startIndex, endIndex);
@@ -301,77 +297,22 @@ function renderPaginatedList(currentUser) {
         }
         
         div.appendChild(btns);
-        div.onclick = () => openChat(entry.id, entry.hex, entry.item);
+        div.onclick = () => window.openChat(entry.id, entry.hex, entry.item);
         searchList.appendChild(div);
     });
 
-    // Update Pagination UI
     document.getElementById("pageDisplay").textContent = `Page ${currentPage}`;
     document.getElementById("prevPage").disabled = (currentPage === 1);
     document.getElementById("nextPage").disabled = (endIndex >= totalSearches.length);
 }
 
-// Function to change pages
 window.changePage = function(direction) {
     currentPage += direction;
-    // We need to know who the user is to render correctly
     const currentUser = localStorage.getItem("currentUser");
     renderPaginatedList(currentUser);
-};;
+};
 
-    // Live sync for "Saved Searches" and "Inbox"
-    onValue(ref(db, 'searches'), (snapshot) => {
-        searchList.innerHTML = "";
-        inboxList.innerHTML = "";
-        const data = snapshot.val();
-        if (!data) return;
-
-        Object.keys(data).forEach(id => {
-            const entry = data[id];
-            
-            // Build Saved Searches Entry
-            const div = document.createElement("div");
-            div.className = "search-entry";
-            div.innerHTML = `<div><strong>${entry.user}</strong> — ${entry.hex} — ${entry.item}</div>`;
-
-            const btns = document.createElement("div");
-            
-            // Transfer logic (Owner only)
-            if(currentUser === entry.user) {
-                const trans = document.createElement("button");
-                trans.textContent = "Transfer";
-                trans.onclick = (e) => {
-                    e.stopPropagation();
-                    let nextOwner = prompt("Enter new owner username:").toLowerCase();
-                    if(nextOwner) set(ref(db, `searches/${id}/user`), nextOwner);
-                };
-                btns.appendChild(trans);
-            }
-
-            // Global Delete (InfinityPixel only)
-            if(currentUser.toLowerCase() === "infinitypixel") {
-                const del = document.createElement("button");
-                del.textContent = "Delete";
-                del.style.marginLeft = "5px";
-                del.onclick = (e) => { e.stopPropagation(); remove(ref(db, `searches/${id}`)); };
-                btns.appendChild(del);
-            }
-            
-            div.appendChild(btns);
-            div.onclick = () => openChat(id, entry.hex, entry.item);
-            searchList.appendChild(div);
-
-            // Build Personal Inbox
-            if(entry.user === currentUser) {
-                const inv = document.createElement("div");
-                inv.className = "inbox-entry";
-                inv.textContent = `${entry.item} (${entry.hex})`;
-                inv.onclick = () => openChat(id, entry.hex, entry.item);
-                inboxList.appendChild(inv);
-            }
-        });
-    });
-}
+// --- DATA MANAGEMENT ---
 
 window.saveSearch = function() {
     const hex = document.getElementById("hexInput").value.trim();
@@ -384,7 +325,6 @@ window.saveSearch = function() {
 
 window.bulkImport = function() {
     const raw = document.getElementById("bulkImportBox").value.trim();
-    const user = localStorage.getItem("currentUser");
     if(!raw) return;
 
     raw.split("\n").forEach(line => {
@@ -393,7 +333,7 @@ window.bulkImport = function() {
             let item = parts[0];
             let hex = parts[1];
             if(hex.length === 7 && hex.startsWith("#")) {
-                push(ref(db, 'searches'), { user, hex, item });
+                push(ref(db, 'searches'), { user: localStorage.getItem("currentUser"), hex, item });
             }
         }
     });
@@ -436,7 +376,7 @@ window.lookupHexCode = function() {
             const resDiv = document.createElement("div");
             resDiv.className = "search-entry";
             resDiv.innerHTML = `<strong>${m.entry.user}</strong> — ${m.entry.hex} — ${m.entry.item} (Similarity Score: ${Math.round(m.dist)})`;
-            resDiv.onclick = () => openChat(m.id, m.entry.hex, m.entry.item);
+            resDiv.onclick = () => window.openChat(m.id, m.entry.hex, m.entry.item);
             resultsDiv.appendChild(resDiv);
         });
     }, { onlyOnce: true });
@@ -449,7 +389,6 @@ window.openChat = function(id, hex, item) {
     document.getElementById("chatWindow").style.display = "block";
     document.getElementById("chatTitle").textContent = `${item} (${hex})`;
     
-    // Clear old messages and listen for new ones globally
     const msgDiv = document.getElementById("chatMessages");
     onValue(ref(db, `messages/${id}`), (snapshot) => {
         msgDiv.innerHTML = "";
@@ -487,6 +426,7 @@ window.resetAllData = function() {
 </script>
 </body>
 </html>
+
 
 
 
