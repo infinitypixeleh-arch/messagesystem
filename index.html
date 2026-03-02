@@ -91,7 +91,7 @@
 
 <hr>
 
-<h3>Hex Code Search</h3>
+<h3>Hex Code Input</h3>
 <input id="hexInput" placeholder="#123ABC" maxlength="7">
 <select id="itemSelect">
     <option value="">Select Item</option>
@@ -102,7 +102,13 @@
 </select>
 <br>
 <button onclick="saveSearch()">Save</button>
+<hr>
 
+<h3>Find a Hex Code</h3>
+<input id="lookupHex" placeholder="#123ABC" maxlength="7">
+<button onclick="lookupHexCode()">Search</button>
+
+<div id="lookupResults"></div>
 <h3>Bulk Import</h3>
 <textarea id="bulkImportBox" placeholder="Paste Seymour Export Here..."></textarea>
 <br>
@@ -327,9 +333,75 @@ function closeChat(){
     localStorage.clear();
     location.reload();
 }
+    function hexToRgb(hex){
+    const bigint = parseInt(hex.slice(1), 16);
+    return {
+        r: (bigint >> 16) & 255,
+        g: (bigint >> 8) & 255,
+        b: bigint & 255
+    };
+}
+
+function colorDistance(c1, c2){
+    return Math.sqrt(
+        Math.pow(c1.r - c2.r, 2) +
+        Math.pow(c1.g - c2.g, 2) +
+        Math.pow(c1.b - c2.b, 2)
+    );
+}
+
+function lookupHexCode(){
+    const input = document.getElementById("lookupHex").value.trim();
+    const resultsDiv = document.getElementById("lookupResults");
+    resultsDiv.innerHTML = "";
+
+    if(input.length !== 7 || !input.startsWith("#")){
+        resultsDiv.textContent = "Invalid hex format.";
+        return;
+    }
+
+    const searches = JSON.parse(localStorage.getItem("savedSearches") || "[]");
+    const inputColor = hexToRgb(input);
+
+    let matches = [];
+
+    searches.forEach(entry => {
+        const entryColor = hexToRgb(entry.hex);
+        const distance = colorDistance(inputColor, entryColor);
+
+        matches.push({
+            entry,
+            distance
+        });
+    });
+
+    // Sort by similarity (smallest distance first)
+    matches.sort((a,b)=>a.distance - b.distance);
+
+    if(matches.length === 0){
+        resultsDiv.textContent = "No saved hexes.";
+        return;
+    }
+
+    // Show top 5 closest matches
+    matches.slice(0,5).forEach(match=>{
+        const div = document.createElement("div");
+        div.className = "search-entry";
+
+        div.innerHTML = `
+            <strong>${match.entry.user}</strong> —
+            ${match.entry.hex} —
+            ${match.entry.item}
+            (Similarity Score: ${Math.round(match.distance)})
+        `;
+
+        resultsDiv.appendChild(div);
+    });
+}
 </script>
 
 </body>
 </html>
+
 
 
