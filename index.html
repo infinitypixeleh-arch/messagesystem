@@ -274,7 +274,17 @@ function renderPaginatedList(currentUser) {
     pageItems.forEach(entry => {
         const div = document.createElement("div");
         div.className = "search-entry";
-        div.innerHTML = `<div><strong>${entry.user}</strong> — ${entry.hex} — ${entry.item}</div>`;
+        
+        // --- UNREAD INDICATOR ---
+        const lastViewed = localStorage.getItem(`lastViewed_${entry.id}`) || 0;
+        const hasUnread = entry.lastActivity && entry.lastActivity > lastViewed;
+        
+        div.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div><strong>${entry.user}</strong> — ${entry.hex} — ${entry.item}</div>
+                ${hasUnread ? '<span style="color: #ed4245; font-weight: bold; margin-left: 10px;">●</span>' : ''}
+            </div>
+        `;
 
         const btns = document.createElement("div");
         
@@ -298,7 +308,13 @@ function renderPaginatedList(currentUser) {
         }
         
         div.appendChild(btns);
-        div.onclick = () => window.openChat(entry.id, entry.hex, entry.item);
+        
+        // --- CLICKING UPDATES "READ" STATUS ---
+        div.onclick = () => {
+            localStorage.setItem(`lastViewed_${entry.id}`, Date.now());
+            window.openChat(entry.id, entry.hex, entry.item);
+        };
+        
         searchList.appendChild(div);
     });
 
@@ -422,64 +438,6 @@ window.openChat = function(id, hex, item) {
         msgDiv.scrollTop = msgDiv.scrollHeight;
     });
 };
-    
-    const msgDiv = document.getElementById("chatMessages");
-    onValue(ref(db, `messages/${id}`), (snapshot) => {
-        msgDiv.innerHTML = "";
-        const msgs = snapshot.val();
-        if(msgs) {
-            Object.values(msgs).forEach(m => {
-                const d = document.createElement("div");
-                d.textContent = `${m.user}: ${m.text}`;
-                msgDiv.appendChild(d);
-            });
-        }
-        msgDiv.scrollTop = msgDiv.scrollHeight;
-    });
-};
-
-window.sendMessage = function() {
-    const input = document.getElementById("chatInput");
-    const text = input.value.trim();
-    if(!text || !activeChatId) return;
-
-    push(ref(db, `messages/${activeChatId}`), {
-        user: localStorage.getItem("currentUser"),
-        text: text
-    });
-    input.value = "";
-};
-
-window.closeChat = () => document.getElementById("chatWindow").style.display = "none";
-
-window.resetAllData = function() {
-    if(confirm("DANGER: This deletes the entire global database. Continue?")) {
-        set(ref(db, '/'), null);
-    }
-};
-
-    // --- NOTIFICATION LOGIC ---
-
-window.requestNotificationPermission = function() {
-    if ("Notification" in window) {
-        Notification.requestPermission().then(permission => {
-            if (permission === "granted") {
-                alert("Notifications enabled!");
-            }
-        });
-    }
-};
-
-function showNotification(item, hex, messageUser, text) {
-    if ("Notification" in window && Notification.permission === "granted") {
-        new Notification(`New message in ${item} (${hex})`, {
-            body: `${messageUser}: ${text}`,
-            icon: 'https://firebase.google.com/downloads/brand-guidelines/PNG/logo-standard.png' // Optional icon
-        });
-    }
-}
-
-// --- UPDATED CHAT LOGIC (For Notifications) ---
 
 window.sendMessage = function() {
     const input = document.getElementById("chatInput");
@@ -508,71 +466,38 @@ window.sendMessage = function() {
     input.value = "";
 };
 
-// --- UPDATED SYNC LOGIC (For Unread Indicators) ---
+window.closeChat = () => document.getElementById("chatWindow").style.display = "none";
 
-// Replace the existing startGlobalSync logic with this to handle the "unread" status
-function renderPaginatedList(currentUser) {
-    const searchList = document.getElementById("searchList");
-    searchList.innerHTML = "";
+window.resetAllData = function() {
+    if(confirm("DANGER: This deletes the entire global database. Continue?")) {
+        set(ref(db, '/'), null);
+    }
+};
 
-    const startIndex = (currentPage - 1) * entriesPerPage;
-    const endIndex = startIndex + entriesPerPage;
-    const pageItems = totalSearches.slice(startIndex, endIndex);
+// --- NOTIFICATION LOGIC ---
 
-    pageItems.forEach(entry => {
-        const div = document.createElement("div");
-        div.className = "search-entry";
-        
-        // --- UNREAD INDICATOR ---
-        // If the last activity is newer than the last time this user clicked the chat
-        const lastViewed = localStorage.getItem(`lastViewed_${entry.id}`) || 0;
-        const hasUnread = entry.lastActivity && entry.lastActivity > lastViewed;
-        
-        div.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <strong>${entry.user}</strong> — ${entry.hex} — ${entry.item}
-                ${hasUnread ? '<span style="color: #ed4245; font-weight: bold; margin-left: 10px;">●</span>' : ''}
-            </div>
-        `;
+window.requestNotificationPermission = function() {
+    if ("Notification" in window) {
+        Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+                alert("Notifications enabled!");
+            }
+        });
+    }
+};
 
-        // ... existing button logic (Transfer/Delete) ...
-        const btns = document.createElement("div");                
-        if(currentUser === entry.user) {
-            const trans = document.createElement("button");
-            trans.textContent = "Transfer";
-            trans.onclick = (e) => {
-                e.stopPropagation();
-                let nextOwner = prompt("Enter new owner username:").toLowerCase();
-                if(nextOwner) set(ref(db, `searches/${entry.id}/user`), nextOwner);
-            };
-            btns.appendChild(trans);
-        }
-        if(currentUser.toLowerCase() === "infinitypixel") {
-            const del = document.createElement("button");
-            del.textContent = "Delete";
-            del.style.marginLeft = "5px";
-            del.onclick = (e) => { e.stopPropagation(); remove(ref(db, `searches/${entry.id}`)); };
-            btns.appendChild(del);
-        }
-        div.appendChild(btns);
-        
-        // --- CLICKING UPDATES "READ" STATUS ---
-        div.onclick = () => {
-            localStorage.setItem(`lastViewed_${entry.id}`, Date.now());
-            window.openChat(entry.id, entry.hex, entry.item);
-        };
-        
-        searchList.appendChild(div);
-    });
-
-    // ... pagination UI update ...
-    document.getElementById("pageDisplay").textContent = `Page ${currentPage}`;
-    document.getElementById("prevPage").disabled = (currentPage === 1);
-    document.getElementById("nextPage").disabled = (endIndex >= totalSearches.length);
+function showNotification(item, hex, messageUser, text) {
+    if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(`New message in ${item} (${hex})`, {
+            body: `${messageUser}: ${text}`,
+            icon: 'https://firebase.google.com/downloads/brand-guidelines/PNG/logo-standard.png' // Optional icon
+        });
+    }
 }
 </script>
 </body>
 </html>
+
 
 
 
