@@ -144,15 +144,13 @@
         style="background:#ed4245; display:none;">
     RESET ALL DATA
 </button>
-<script>
-    // Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+<script type="module">
+// 1. IMPORT FIREBASE MODULES
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getDatabase, ref, push, set, onValue, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// 2. YOUR FIREBASE CONFIGURATION
 const firebaseConfig = {
   apiKey: "AIzaSyAXAMTPkmQx4KLydLsEUPPnrI748Exd4Hw",
   authDomain: "seymourbase-a1ad6.firebaseapp.com",
@@ -164,259 +162,239 @@ const firebaseConfig = {
   measurementId: "G-W5MQ8XWS6M"
 };
 
-// Initialize Firebase
+// Initialize
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+const auth = getAuth(app);
+const db = getDatabase(app);
+
+// Global State
 let mode = "login";
-let currentPage = 1;
-const itemsPerPage = 5;
-let activeHex = null;
-let activeItemName = null;
+let activeChatId = null;
 
-function switchToCreate(){
+// --- AUTH LOGIC ---
+
+window.switchToCreate = function() {
     mode = "create";
-}
+    document.getElementById("errorMsg").textContent = "Mode: Create Account";
+};
 
-function submitLogin(){
-    const user = usernameInput.value.trim();
-    const pass = passwordInput.value.trim();
+window.submitLogin = async function() {
+    const user = document.getElementById("usernameInput").value.trim();
+    const pass = document.getElementById("passwordInput").value.trim();
     if(!user || !pass) return;
 
-    let users = JSON.parse(localStorage.getItem("users") || "{}");
+    // Firebase requires an email format, so we use a fake domain for your usernames
+    const fakeEmail = `${user.toLowerCase()}@seymour.base`;
 
-    if(mode === "create"){
-        if(users[user]) return errorMsg.textContent="User exists";
-        users[user]=pass;
-        localStorage.setItem("users",JSON.stringify(users));
-    }
-
-    if(users[user] !== pass) return errorMsg.textContent="Wrong login";
-
-    localStorage.setItem("currentUser", user);
-    loginSuccess();
-}
-
-function loginSuccess(){
-    const user = localStorage.getItem("currentUser");
-
-    loginSection.style.display = "none";
-    appSection.style.display = "block";
-
-    // 🔥 Only show reset button for InfinityPixel
-    if(user === "InfinityPixel"){
-        document.getElementById("resetBtn").style.display = "inline-block";
-    }
-
-    loadSavedSearches();
-    loadInbox();
-}
-
-function saveSearch() {
-    const hex = document.getElementById("hexInput").value.trim();
-    const item = document.getElementById("itemSelect").value;
-    const user = localStorage.getItem("currentUser");
-    
-    if(hex.length !== 7 || !item) return;
-
-    // Push to Firebase instead of localStorage
-    const searchRef = ref(db, 'searches');
-    const newSearchRef = push(searchRef);
-    set(newSearchRef, {
-        user: user,
-        hex: hex,
-        item: item,
-        timestamp: Date.now()
-    });
-}
-
-function bulkImport(){
-    const raw = bulkImportBox.value.trim();
-    const user = localStorage.getItem("currentUser");
-    if(!raw) return;
-
-    let searches = JSON.parse(localStorage.getItem("savedSearches")||"[]");
-    raw.split("\n").forEach(line=>{
-        let parts = line.split("|").map(p=>p.trim());
-        if(parts.length>=2){
-            let item = parts[0];
-            let hex = parts[1];
-            if(hex.length===7 && hex.startsWith("#")){
-                searches.push({user,hex,item});
-            }
+    try {
+        if (mode === "create") {
+            await createUserWithEmailAndPassword(auth, fakeEmail, pass);
+        } else {
+            await signInWithEmailAndPassword(auth, fakeEmail, pass);
         }
-    });
+    } catch (error) {
+        document.getElementById("errorMsg").textContent = "Login failed: " + error.message;
+    }
+};
 
-    localStorage.setItem("savedSearches",JSON.stringify(searches));
-    bulkImportBox.value="";
-    loadSavedSearches();
-}
+// Listener for Login/Logout (Replaces loginSuccess)
+onAuthStateChanged(auth, (user) => {
+    const loginSection = document.getElementById("loginSection");
+    const appSection = document.getElementById("appSection");
+    const resetBtn = document.getElementById("resetBtn");
 
-function deleteSearch(index){
-    let searches = JSON.parse(localStorage.getItem("savedSearches")||"[]");
-    searches.splice(index,1);
-    localStorage.setItem("savedSearches",JSON.stringify(searches));
-    loadSavedSearches();
-}
-
-function syncSavedSearches() {
-    const searchRef = ref(db, 'searches');
-    
-    // This "listens" for changes constantly
-    onValue(searchRef, (snapshot) => {
-        const data = snapshot.val();
-        const list = document.getElementById("searchList");
-        list.innerHTML = "";
+    if (user) {
+        const username = user.email.split('@')[0];
+        localStorage.setItem("currentUser", username);
+        loginSection.style.display = "none";
+        appSection.style.display = "block";
         
+        if(username.toLowerCase() === "infinitypixel") {
+            resetBtn.style.display = "inline-block";
+        }
+        
+        startGlobalSync(username);
+    } else {
+        loginSection.style.display = "block";
+        appSection.style.display = "none";
+    }
+});
+
+// --- GLOBAL DATA SYNC ---
+
+function startGlobalSync(currentUser) {
+    const searchList = document.getElementById("searchList");
+    const inboxList = document.getElementById("inboxList");
+
+    // Live sync for "Saved Searches" and "Inbox"
+    onValue(ref(db, 'searches'), (snapshot) => {
+        searchList.innerHTML = "";
+        inboxList.innerHTML = "";
+        const data = snapshot.val();
         if (!data) return;
 
-        // Convert the object from Firebase into an array we can display
-        Object.keys(data).forEach((key) => {
-            const entry = data[key];
+        Object.keys(data).forEach(id => {
+            const entry = data[id];
+            
+            // Build Saved Searches Entry
             const div = document.createElement("div");
             div.className = "search-entry";
+            div.innerHTML = `<div><strong>${entry.user}</strong> — ${entry.hex} — ${entry.item}</div>`;
+
+            const btns = document.createElement("div");
             
-            div.innerHTML = `
-                <div><strong>${entry.user}</strong> — ${entry.hex} — ${entry.item}</div>
-                <button onclick="openChat('${entry.hex}', '${entry.item}')">Chat</button>
-            `;
-            list.appendChild(div);
+            // Transfer logic (Owner only)
+            if(currentUser === entry.user) {
+                const trans = document.createElement("button");
+                trans.textContent = "Transfer";
+                trans.onclick = (e) => {
+                    e.stopPropagation();
+                    let nextOwner = prompt("Enter new owner username:").toLowerCase();
+                    if(nextOwner) set(ref(db, `searches/${id}/user`), nextOwner);
+                };
+                btns.appendChild(trans);
+            }
+
+            // Global Delete (InfinityPixel only)
+            if(currentUser.toLowerCase() === "infinitypixel") {
+                const del = document.createElement("button");
+                del.textContent = "Delete";
+                del.style.marginLeft = "5px";
+                del.onclick = (e) => { e.stopPropagation(); remove(ref(db, `searches/${id}`)); };
+                btns.appendChild(del);
+            }
+            
+            div.appendChild(btns);
+            div.onclick = () => openChat(id, entry.hex, entry.item);
+            searchList.appendChild(div);
+
+            // Build Personal Inbox
+            if(entry.user === currentUser) {
+                const inv = document.createElement("div");
+                inv.className = "inbox-entry";
+                inv.textContent = `${entry.item} (${entry.hex})`;
+                inv.onclick = () => openChat(id, entry.hex, entry.item);
+                inboxList.appendChild(inv);
+            }
         });
     });
 }
 
-function loadInbox(){
-    const inbox=document.getElementById("inboxList");
-    inbox.innerHTML="";
-    const user=localStorage.getItem("currentUser");
-    let searches=JSON.parse(localStorage.getItem("savedSearches")||"[]");
-
-    searches.filter(s=>s.user===user).forEach(entry=>{
-        const div=document.createElement("div");
-        div.className="inbox-entry";
-        div.textContent=`${entry.item} (${entry.hex})`;
-        div.onclick=()=>openChat(entry.hex,entry.item);
-        inbox.appendChild(div);
-    });
-}
-
-function openChat(hex,item){
-    activeHex=hex;
-    activeItemName=item;
-    chatWindow.style.display="block";
-    chatTitle.textContent=`${item} (${hex})`;
-    renderChat();
-}
-
-function renderChat(){
-    chatMessages.innerHTML="";
-    let all=JSON.parse(localStorage.getItem("messages")||"{}");
-    let msgs=all[activeHex]||[];
-    msgs.forEach(m=>{
-        const div=document.createElement("div");
-        div.textContent=`${m.user}: ${m.text}`;
-        chatMessages.appendChild(div);
-    });
-}
-
-function sendMessage(){
-    const text=chatInput.value.trim();
-    if(!text) return;
-    let all=JSON.parse(localStorage.getItem("messages")||"{}");
-    if(!all[activeHex]) all[activeHex]=[];
-    all[activeHex].push({
-        user:localStorage.getItem("currentUser"),
-        text:text
-    });
-   push(ref(db, 'chats/' + activeHex), { user, text });
-    chatInput.value="";
-    renderChat(onValue(ref(db, 'chats/' + activeHex), { user, text }));
-}
-
-function closeChat(){
-    chatWindow.style.display="none";
-}
-    function resetAllData(){
+window.saveSearch = function() {
+    const hex = document.getElementById("hexInput").value.trim();
+    const item = document.getElementById("itemSelect").value;
     const user = localStorage.getItem("currentUser");
-
-    if(user !== "InfinityPixel"){
-        alert("Only InfinityPixel can reset all data.");
-        return;
+    if(hex.length === 7 && item) {
+        push(ref(db, 'searches'), { user, hex, item, timestamp: Date.now() });
     }
+};
 
-    if(!confirm("Are you sure? This will permanently delete ALL saved data.")) return;
+window.bulkImport = function() {
+    const raw = document.getElementById("bulkImportBox").value.trim();
+    const user = localStorage.getItem("currentUser");
+    if(!raw) return;
 
-    localStorage.clear();
-    location.reload();
-}
-    function hexToRgb(hex){
+    raw.split("\n").forEach(line => {
+        let parts = line.split("|").map(p => p.trim());
+        if(parts.length >= 2) {
+            let item = parts[0];
+            let hex = parts[1];
+            if(hex.length === 7 && hex.startsWith("#")) {
+                push(ref(db, 'searches'), { user, hex, item });
+            }
+        }
+    });
+    document.getElementById("bulkImportBox").value = "";
+};
+
+// --- COLOR SEARCH LOGIC ---
+
+function hexToRgb(hex) {
     const bigint = parseInt(hex.slice(1), 16);
-    return {
-        r: (bigint >> 16) & 255,
-        g: (bigint >> 8) & 255,
-        b: bigint & 255
-    };
+    return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
 }
 
-function colorDistance(c1, c2){
-    return Math.sqrt(
-        Math.pow(c1.r - c2.r, 2) +
-        Math.pow(c1.g - c2.g, 2) +
-        Math.pow(c1.b - c2.b, 2)
-    );
+function colorDistance(c1, c2) {
+    return Math.sqrt(Math.pow(c1.r-c2.r,2) + Math.pow(c1.g-c2.g,2) + Math.pow(c1.b-c2.b,2));
 }
 
-function lookupHexCode(){
+window.lookupHexCode = function() {
     const input = document.getElementById("lookupHex").value.trim();
     const resultsDiv = document.getElementById("lookupResults");
     resultsDiv.innerHTML = "";
 
-    if(input.length !== 7 || !input.startsWith("#")){
-        resultsDiv.textContent = "Invalid hex format.";
-        return;
-    }
+    if(input.length !== 7 || !input.startsWith("#")) return;
 
-    const searches = JSON.parse(localStorage.getItem("savedSearches") || "[]");
     const inputColor = hexToRgb(input);
 
-    let matches = [];
+    onValue(ref(db, 'searches'), (snapshot) => {
+        const data = snapshot.val();
+        if(!data) return;
 
-    searches.forEach(entry => {
-        const entryColor = hexToRgb(entry.hex);
-        const distance = colorDistance(inputColor, entryColor);
-
-        matches.push({
-            entry,
-            distance
+        let matches = [];
+        Object.keys(data).forEach(id => {
+            const entry = data[id];
+            const dist = colorDistance(inputColor, hexToRgb(entry.hex));
+            matches.push({ entry, dist, id });
         });
+
+        matches.sort((a,b) => a.dist - b.dist);
+        matches.slice(0,5).forEach(m => {
+            const resDiv = document.createElement("div");
+            resDiv.className = "search-entry";
+            resDiv.innerHTML = `<strong>${m.entry.user}</strong> — ${m.entry.hex} — ${m.entry.item} (Similarity Score: ${Math.round(m.dist)})`;
+            resDiv.onclick = () => openChat(m.id, m.entry.hex, m.entry.item);
+            resultsDiv.appendChild(resDiv);
+        });
+    }, { onlyOnce: true });
+};
+
+// --- REAL-TIME CHAT LOGIC ---
+
+window.openChat = function(id, hex, item) {
+    activeChatId = id;
+    document.getElementById("chatWindow").style.display = "block";
+    document.getElementById("chatTitle").textContent = `${item} (${hex})`;
+    
+    // Clear old messages and listen for new ones globally
+    const msgDiv = document.getElementById("chatMessages");
+    onValue(ref(db, `messages/${id}`), (snapshot) => {
+        msgDiv.innerHTML = "";
+        const msgs = snapshot.val();
+        if(msgs) {
+            Object.values(msgs).forEach(m => {
+                const d = document.createElement("div");
+                d.textContent = `${m.user}: ${m.text}`;
+                msgDiv.appendChild(d);
+            });
+        }
+        msgDiv.scrollTop = msgDiv.scrollHeight;
     });
+};
 
-    // Sort by similarity (smallest distance first)
-    matches.sort((a,b)=>a.distance - b.distance);
+window.sendMessage = function() {
+    const input = document.getElementById("chatInput");
+    const text = input.value.trim();
+    if(!text || !activeChatId) return;
 
-    if(matches.length === 0){
-        resultsDiv.textContent = "No saved hexes.";
-        return;
+    push(ref(db, `messages/${activeChatId}`), {
+        user: localStorage.getItem("currentUser"),
+        text: text
+    });
+    input.value = "";
+};
+
+window.closeChat = () => document.getElementById("chatWindow").style.display = "none";
+
+window.resetAllData = function() {
+    if(confirm("DANGER: This deletes the entire global database. Continue?")) {
+        set(ref(db, '/'), null);
     }
-
-    // Show top 5 closest matches
-    matches.slice(0,5).forEach(match=>{
-        const div = document.createElement("div");
-        div.className = "search-entry";
-
-        div.innerHTML = `
-            <strong>${match.entry.user}</strong> —
-            ${match.entry.hex} —
-            ${match.entry.item}
-            (Similarity Score: ${Math.round(match.distance)})
-        `;
-
-        resultsDiv.appendChild(div);
-    });
-}
+};
 </script>
-
 </body>
 </html>
+
 
 
 
